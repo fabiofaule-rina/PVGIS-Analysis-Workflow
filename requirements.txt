@@ -1,0 +1,7 @@
+
+reflex==0.8.15a1
+geopandas
+shapely
+pyproj
+fiona
+reflex-enterprise

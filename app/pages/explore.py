@@ -1,6 +1,7 @@
 import reflex as rx
 import reflex_enterprise as rxe
 from app.state import AppState, ExploreState, SampleRow, GeoJSONFeature
+from reflex_enterprise.components.map.types import LatLng, latlng
 
 MAP_ID = "explore-map"
 
@@ -30,12 +31,9 @@ def map_section() -> rx.Component:
                 rx.cond(
                     AppState.is_data_loaded,
                     rx.foreach(
-                        AppState.geojson_features,
+                        AppState.map_features,
                         lambda feature: rxe.map.polygon(
-                            positions=rx.foreach(
-                                feature["geometry"]["coordinates"][0],
-                                lambda p: (p[1], p[0]),
-                            ),
+                            positions=feature["positions"],
                             path_options={
                                 "color": "#2B79D1",
                                 "weight": 2,
@@ -50,7 +48,7 @@ def map_section() -> rx.Component:
                             on_click=ExploreState.select_building_from_map(
                                 feature["properties"]["id"]
                             ),
-                            key=feature["properties"]["id"],
+                            key=feature["id"],
                         ),
                     ),
                     None,
@@ -60,7 +58,7 @@ def map_section() -> rx.Component:
             id=MAP_ID,
             center=ExploreState.map_center,
             zoom=ExploreState.map_zoom,
-            max_bounds=ExploreState.map_bounds,
+            max_bounds=ExploreState.map_bounds_for_map,
             width="100%",
             height="100%",
             class_name="rounded-2xl",

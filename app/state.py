@@ -1,5 +1,6 @@
 import reflex as rx
-from typing import TypedDict, cast, Any, Literal
+import reflex_enterprise as rxe
+from typing import TypedDict, Any, Literal
 import asyncio
 import zipfile
 import io
@@ -32,6 +33,12 @@ class GeoJSONFeature(TypedDict):
     type: Literal["Feature"]
     properties: dict[str, str | int | float | None]
     geometry: PolygonGeometry
+
+
+class MapFeature(TypedDict):
+    id: int
+    properties: dict[str, str | int | float | None]
+    positions: list[LatLng]
 
 
 class GeoJSON(TypedDict):
@@ -94,12 +101,32 @@ class AppState(rx.State):
             return []
         return self.geojson_data.get("features", [])
 
+    @rx.var
+    def map_features(self) -> list[MapFeature]:
+        if not self.geojson_data:
+            return []
+        map_features_list = []
+        for feature in self.geojson_data.get("features", []):
+            try:
+                coords = feature["geometry"]["coordinates"][0]
+                positions = [latlng(lat=p[1], lng=p[0]) for p in coords]
+                map_features_list.append(
+                    {
+                        "id": feature["properties"]["id"],
+                        "properties": feature["properties"],
+                        "positions": positions,
+                    }
+                )
+            except (KeyError, IndexError) as e:
+                logging.exception(f"Skipping invalid feature for map: {e}")
+        return map_features_list
+
     @rx.event
     async def next_page(self):
         explore_state = await self.get_state(ExploreState)
         total_pages = self.total_pages
         if self.router.page.path == "/explore":
-            total_pages = explore_state.explore_total_pages
+            total_pages = await self.get_var_value(explore_state.explore_total_pages)
         if self.current_page < total_pages:
             self.current_page += 1
 
@@ -179,9 +206,9 @@ class AppState(rx.State):
             self.upload_progress = 80
             yield
             explore_state = await self.get_state(ExploreState)
-            explore_state.map_bounds = [[bounds[1], bounds[0]], [bounds[3], bounds[2]]]
+            explore_state.map_bounds = bounds
             explore_state.selected_building_id = None
-            self.geojson_data = cast(GeoJSON, gdf_reprojected.__geo_interface__)
+            self.geojson_data = gdf_reprojected.__geo_interface__
             for i, feature in enumerate(self.geojson_data["features"]):
                 feature["properties"]["id"] = i
             all_rows_df = gdf_reprojected.drop(columns="geometry")
@@ -357,9 +384,20 @@ class ExploreState(rx.State):
     layer_visibility: dict[str, bool] = {"buildings": True, "pv_potential": False}
     map_center: LatLng = latlng(lat=39.8283, lng=-98.5795)
     map_zoom: float = 4.0
-    map_bounds: list[list[float]] | None = None
+    map_bounds: tuple[float, float, float, float] | None = None
     table_sort_column: str | None = None
     table_sort_direction: str = "asc"
+
+    @rx.var
+    def map_bounds_for_map(self) -> rxe.map.LatLngBounds | None:
+        from reflex_enterprise.components.map.types import latlng, LatLngBounds
+
+        if not self.map_bounds:
+            return None
+        b = self.map_bounds
+        return LatLngBounds(
+            corner1=latlng(lat=b[1], lng=b[0]), corner2=latlng(lat=b[3], lng=b[2])
+        )
 
     @rx.var
     async def filtered_rows(self) -> list[SampleRow]:
@@ -374,31 +412,24 @@ class ExploreState(rx.State):
             if any((search_term in str(val).lower() for val in row["data"].values()))
         ]
 
+    def _sort_key(self, row):
+        val = row["data"].get(self.table_sort_column)
+        if val is None:
+            return -float("inf") if self.table_sort_direction == "asc" else float("inf")
+        try:
+            return float(val)
+        except (ValueError, TypeError) as e:
+            logging.exception(f"Could not convert {val} to float: {e}")
+            return str(val)
+
     @rx.var
     async def sorted_and_filtered_rows(self) -> list[SampleRow]:
         rows = await self.get_var_value(self.filtered_rows)
         if not self.table_sort_column:
             return rows
-        sort_column = self.table_sort_column
-
-        @rx.event
-        def sort_key(row):
-            val = row["data"].get(sort_column)
-            if val is None:
-                return (
-                    -float("inf")
-                    if self.table_sort_direction == "asc"
-                    else float("inf")
-                )
-            try:
-                return float(val)
-            except (ValueError, TypeError) as e:
-                logging.exception(f"Could not convert to float for sorting: {e}")
-                return str(val)
-
         try:
             return sorted(
-                rows, key=sort_key, reverse=self.table_sort_direction == "desc"
+                rows, key=self._sort_key, reverse=self.table_sort_direction == "desc"
             )
         except Exception as e:
             logging.exception(f"Error sorting table: {e}")

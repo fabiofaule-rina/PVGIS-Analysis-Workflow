@@ -23,10 +23,15 @@ class SampleRow(TypedDict):
     data: dict[str, str | int | float | None]
 
 
+class PolygonGeometry(TypedDict):
+    type: Literal["Polygon"]
+    coordinates: list[list[list[float]]]
+
+
 class GeoJSONFeature(TypedDict):
     type: Literal["Feature"]
     properties: dict[str, str | int | float | None]
-    geometry: dict
+    geometry: PolygonGeometry
 
 
 class GeoJSON(TypedDict):
@@ -388,10 +393,16 @@ class ExploreState(rx.State):
             try:
                 return float(val)
             except (ValueError, TypeError) as e:
-                logging.exception(f"Error sorting table: {e}")
+                logging.exception(f"Could not convert to float for sorting: {e}")
                 return str(val)
 
-        return sorted(rows, key=sort_key, reverse=self.table_sort_direction == "desc")
+        try:
+            return sorted(
+                rows, key=sort_key, reverse=self.table_sort_direction == "desc"
+            )
+        except Exception as e:
+            logging.exception(f"Error sorting table: {e}")
+            return rows
 
     @rx.var
     async def current_page(self) -> int:

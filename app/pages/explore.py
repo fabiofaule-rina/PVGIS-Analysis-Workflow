@@ -30,11 +30,12 @@ def map_section() -> rx.Component:
                 rx.cond(
                     AppState.is_data_loaded,
                     rx.foreach(
-                        AppState.geojson_features.to(list[GeoJSONFeature]),
+                        AppState.geojson_features,
                         lambda feature: rxe.map.polygon(
-                            positions=feature["geometry"]["coordinates"][0]
-                            .to(list[list[float]])
-                            .map(lambda p: (p[1], p[0])),
+                            positions=rx.foreach(
+                                feature["geometry"]["coordinates"][0],
+                                lambda p: (p[1], p[0]),
+                            ),
                             path_options={
                                 "color": "#2B79D1",
                                 "weight": 2,
